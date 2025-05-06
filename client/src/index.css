@@ -1,0 +1,183 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+      --background: 0 0% 100%;
+--foreground: 20 14.3% 4.1%;
+--muted: 60 4.8% 95.9%;
+--muted-foreground: 25 5.3% 44.7%;
+--popover: 0 0% 100%;
+--popover-foreground: 20 14.3% 4.1%;
+--card: 0 0% 100%;
+--card-foreground: 20 14.3% 4.1%;
+--border: 20 5.9% 90%;
+--input: 20 5.9% 90%;
+--primary: 207 90% 54%;
+--primary-foreground: 211 100% 99%;
+--secondary: 60 4.8% 95.9%;
+--secondary-foreground: 24 9.8% 10%;
+--accent: 60 4.8% 95.9%;
+--accent-foreground: 24 9.8% 10%;
+--destructive: 0 84.2% 60.2%;
+--destructive-foreground: 60 9.1% 97.8%;
+--ring: 20 14.3% 4.1%;
+--radius: 0.5rem;
+  }
+  .dark {
+      --background: 240 10% 3.9%;
+--foreground: 0 0% 98%;
+--muted: 240 3.7% 15.9%;
+--muted-foreground: 240 5% 64.9%;
+--popover: 240 10% 3.9%;
+--popover-foreground: 0 0% 98%;
+--card: 240 10% 3.9%;
+--card-foreground: 0 0% 98%;
+--border: 240 3.7% 15.9%;
+--input: 240 3.7% 15.9%;
+--primary: 207 90% 54%;
+--primary-foreground: 211 100% 99%;
+--secondary: 240 3.7% 15.9%;
+--secondary-foreground: 0 0% 98%;
+--accent: 240 3.7% 15.9%;
+--accent-foreground: 0 0% 98%;
+--destructive: 0 62.8% 30.6%;
+--destructive-foreground: 0 0% 98%;
+--ring: 240 4.9% 83.9%;
+--radius: 0.5rem;
+  }
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+  }
+  
+  /* 固定幅コンテナ - 画面のちらつきを防止 */
+  .ace-editor-container {
+    min-width: 100%;
+    width: 100%;
+    position: relative;
+    box-sizing: border-box;
+    overflow: hidden;
+    flex-shrink: 0;
+    flex-grow: 0;
+  }
+  
+  /* エディタのレイアウトが変わらないようにする */
+  .ace_editor {
+    position: absolute !important;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    font-family: 'Fira Code', monospace !important;
+  }
+  
+  /* メイングリッドの制御 */
+  #main-grid {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow: visible;
+    display: grid;
+    grid-template-columns: 50% 50%;
+    gap: 1.5rem;
+  }
+  
+  /* エディタとアウトプットセクションの制御 */
+  #editor-section,
+  #output-section {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow: visible;
+  }
+  
+  /* アウトプットコンソールの固定サイズ設定 */
+  .output-console {
+    width: 100%;
+    min-width: 100%;
+    box-sizing: border-box;
+    position: relative;
+    flex-shrink: 0;
+    flex-grow: 0;
+    transition: height 0.2s ease-in-out;
+    overflow: visible;
+  }
+  
+  /* プロット表示エリアのサイズを固定 */
+  .plot-container {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow: auto;
+    position: relative;
+    z-index: 1;
+    background: white;
+    flex-grow: 1;
+    min-height: 0;
+  }
+  
+  /* プロット画像が親コンテナを超えないようにする */
+  .plot-item img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+  }
+  
+  /* matplotlibの出力を制御 */
+  .matplotlib-figure {
+    position: relative;
+    z-index: 1;
+    margin: 10px 0;
+    padding: 10px;
+    border: 1px solid #eee;
+    background: white;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  .matplotlib-figure img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+  }
+  
+  /* テキスト出力エリアの制御 */
+  #output-container {
+    flex-shrink: 0;
+    min-height: 100px;
+    max-height: 50%;
+    overflow-y: auto;
+  }
+  
+  /* matplotlibの出力コンテナを制御 */
+  #matplotlib-output {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 0 !important;
+    overflow: hidden !important;
+    z-index: 1 !important;
+  }
+  
+  /* ボタンが表示されない問題を修正 */
+  .ResizablePanel {
+    min-height: auto;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  
+  /* ボタンと各セクションが見えるように */
+  .space-y-4 > * {
+    margin-top: 1rem;
+    display: block !important;
+    visibility: visible !important;
+  }
+}

@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <title>PyScript Browser Compiler</title>
+    <!-- PyScript CDN Links - Using 2025.3.1 version -->
+    <link rel="stylesheet" href="https://pyscript.net/releases/2025.3.1/core.css" />
+    <script type="module" src="https://pyscript.net/releases/2025.3.1/core.js"></script>
+    <!-- UI Resources -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/remixicon@2.5.0/fonts/remixicon.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    
+    <!-- Ace Editor Resources -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.2/ace.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.2/mode-python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.2/theme-monokai.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.2/theme-github.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.2/ext-language_tools.min.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <!-- This is a replit script which adds a banner on the top of the page when opened in development mode outside the replit environment -->
+    <script type="text/javascript" src="https://replit.com/public/js/replit-dev-banner.js"></script>
+    
+    <!-- PyScript Output Container (hidden, only used for internal data passing) -->
+    <div id="pyscript-output" style="display: none; visibility: hidden; height: 0; width: 0; overflow: hidden;"></div>
+
+    <!-- PyScript Runtime Environment - 2025.3.1 -->    
+    <py-config>
+      packages = ["numpy", "matplotlib", "pandas", "scikit-learn"]
+      [[runtimes]]
+      src = "https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js"
+      name = "pyodide-0.25.0"
+      lang = "python"
+    </py-config>
+
+    <!-- Add a container for matplotlib plots that will be accessed by React components -->
+    <div id="matplotlib-output" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 0; overflow: hidden;"></div>
+    
+    <py-script id="py-runtime">
+      import sys
+      import io
+      import random
+      import time
+      import js
+      from pyodide.ffi import create_proxy
+      
+      async def execute_code(code):
+          # Check if code is empty
+          if not code or code.strip() == '':
+              return 'No code to execute. Please write some code.'
+          
+          try:
+              # Reset matplotlib divs and clean up previous plots
+              
+              # Clean up the main output div - either clear existing or create new
+              plot_div = js.document.getElementById('matplotlib-output')
+              if plot_div:
+                  # Clear any existing content - important to prevent accumulation
+                  plot_div.innerHTML = ''
+                  # Hide initially - our JavaScript code will make visible if needed
+                  plot_div.style.display = 'none'
+              else:
+                  # Create the div if it doesn't exist yet
+                  plot_div = js.document.createElement('div')
+                  plot_div.id = 'matplotlib-output'
+                  plot_div.style.display = 'none'
+                  js.document.body.appendChild(plot_div)
+                  
+              # Also clean up any matplotlib divs that might have been created
+              # Find and remove all matplotlib divs that might appear in the DOM
+              all_divs = js.document.querySelectorAll('div[id^="matplotlib_"]')
+              for i in range(all_divs.length):
+                  try:
+                      # Remove the div from its parent
+                      all_divs[i].parentNode.removeChild(all_divs[i])
+                  except Exception as div_err:
+                      print(f"Warning: Could not remove matplotlib div: {div_err}")
+              
+              # Capture stdout
+              old_stdout = sys.stdout
+              redirected_output = io.StringIO()
+              sys.stdout = redirected_output
+              
+              # Import common modules
+              import random
+              import math
+              import time
+              import numpy as np
+              
+              # Import and initialize micropip for installing additional packages
+              try:
+                  import micropip
+                  print("Micropip available for package installation")
+              except ImportError:
+                  print("Micropip not available - some packages may not be installable")
+              
+              # Custom input function with browser prompt
+              def custom_input(prompt=""):
+                  return js.window.prompt(prompt, "")
+              
+              # Setup namespace with modules
+              namespace = {
+                  "random": random,
+                  "math": math,
+                  "time": time,
+                  "np": np,
+                  "input": custom_input
+              }
+              
+              # Check for auto-imported custom modules markers in the code
+              custom_modules = []
+              is_user_code = False
+              for line in code.split('\n'):
+                  # Skip lines until we see the user code marker
+                  if line.strip() == '# User code':
+                      is_user_code = True
+                      continue
+                  
+                  # If we're not in user code yet, check for import statements
+                  if not is_user_code and line.strip().startswith('import '):
+                      module_name = line.strip().split(' ')[1].split('.')[0].split(' as ')[0]
+                      custom_modules.append(module_name)
+              
+              # Process built-in modules and other imports
+              for module_name in custom_modules + ['pandas', 'sklearn', 'matplotlib', 'scipy']:
+                  # Skip if the module isn't in custom_modules and isn't detected in code
+                  if module_name not in custom_modules and module_name not in code and module_name != 'matplotlib':
+                      if module_name == 'pandas' and 'pd' not in code:
+                          continue
+                      if module_name == 'matplotlib' and 'plt' not in code:
+                          continue
+                  
+                  # Try to import and add to namespace
+                  try:
+                      if module_name == 'pandas':
+                          import pandas as pd
+                          namespace["pd"] = pd
+                          print(f"Module '{module_name}' loaded as pd")
+                      
+                      elif module_name == 'matplotlib':
+                          # Configure matplotlib for web with stderr redirection to suppress font messages
+                          import os
+                          os.environ['MPLCONFIGDIR'] = '/tmp/matplotlib_cache'  # Set cache directory
+                          
+                          # Redirect stderr temporarily
+                          old_stderr = sys.stderr
+                          sys.stderr = io.StringIO()
+                          
+                          # Import with non-interactive backend first
+                          import matplotlib
+                          matplotlib.use("module://matplotlib_pyodide.html5_canvas_backend")
+                          import matplotlib.pyplot as plt
+                          
+                          # Override show function to prevent canvas from appearing in the main window
+                          original_show = plt.show
+                          def custom_show(*args, **kwargs):
+                              # Disable rendering to DOM
+                              return original_show(block=False)
+                          plt.show = custom_show
+                          
+                          # Restore stderr
+                          sys.stderr = old_stderr
+                          
+                          # Add to namespace
+                          namespace["plt"] = plt
+                          namespace["matplotlib"] = matplotlib
+                          print(f"Module '{module_name}' loaded with pyplot as plt")
+                      
+                      elif module_name == 'sklearn':
+                          import sklearn
+                          namespace["sklearn"] = sklearn
+                          print(f"Module '{module_name}' loaded")
+                      
+                      elif module_name == 'numpy':
+                          import numpy as np
+                          namespace["np"] = np
+                          print(f"Module '{module_name}' loaded as np")
+                      
+                      elif module_name == 'scipy':
+                          import scipy as sp
+                          namespace["sp"] = sp
+                          print(f"Module '{module_name}' loaded as sp")
+                      
+                      elif module_name == 'sympy':
+                          import sympy as sym
+                          namespace["sym"] = sym
+                          print(f"Module '{module_name}' loaded as sym")
+                      
+                      # Generic module import for any other module
+                      else:
+                          try:
+                              # First attempt direct import
+                              exec(f"import {module_name}", namespace)
+                              print(f"Module '{module_name}' loaded")
+                          except ImportError:
+                              try:
+                                  # If direct import fails, try to install through micropip
+                                  print(f"Attempting to install '{module_name}' via micropip...")
+                                  import micropip
+                                  # Use micropip.install with simple package name (no version specifications)
+                                  await micropip.install([module_name])
+                                  print(f"Package '{module_name}' installed, now importing...")
+                                  # Try to import again after installation
+                                  try:
+                                      exec(f"import {module_name}", namespace)
+                                      print(f"Module '{module_name}' installed and loaded successfully")
+                                  except ImportError as second_import_err:
+                                      print(f"Module installed but failed to import: {second_import_err}")
+                                      print("This is typically because some packages are not available in Pyodide.")
+                                      print("Packages with C extensions (like xgboost) or system-level dependencies (like tkinter) may not work.")
+                              except Exception as install_err:
+                                  print(f"Failed to install '{module_name}': {install_err}")
+                                  print("Some packages cannot be installed in the browser environment.")
+                                  print("Try a pure-Python alternative if available.")
+                  
+                  except Exception as e:
+                      print(f"Warning: Failed to load {module_name}: {e}")
+              
+              # Execute user code with better error handling
+              try:
+                  exec(code, namespace)
+              except SyntaxError as syn_err:
+                  print(f"Syntax Error: {syn_err}")
+                  print("Check your code for missing quotes, parentheses, or other syntax issues.")
+              except Exception as exec_err:
+                  print(f"Error executing code: {exec_err}")
+              
+              # Extremely simplified matplotlib handling
+              if 'matplotlib' in code or 'plt' in code:
+                  try:
+                      # Capture stderr output to hide font cache messages
+                      old_stderr = sys.stderr
+                      sys.stderr = io.StringIO()
+                      
+                      # Import inline to ensure proper configuration
+                      import matplotlib
+                      matplotlib.use('Agg')  # Force non-interactive backend
+                      
+                      # Ultra minimal configuration - just the essentials
+                      matplotlib.rcParams.update({
+                          'figure.figsize': (6, 4),
+                          'figure.dpi': 80,
+                          'interactive': False
+                      })
+                      # Avoid font issues completely
+                      matplotlib.rcParams.update({'font.family': 'monospace'})
+                      
+                      # Get figure count from matplotlib
+                      import matplotlib.pyplot as plt
+                      from io import BytesIO
+                      import base64
+                      
+                      # Get the figures directly
+                      figures = plt.get_fignums()
+                      
+                      if figures:
+                          # Use the simplest possible approach for displaying plots
+                          # Convert figures to base64 strings
+                          for fig_num in figures:
+                              try:
+                                  # Get the figure
+                                  fig = plt.figure(fig_num)
+                                  
+                                  # Save to bytesIO
+                                  buffer = BytesIO()
+                                  fig.savefig(buffer, format='png')
+                                  buffer.seek(0)
+                                  
+                                  # Convert to base64
+                                  image_data = base64.b64encode(buffer.read()).decode('utf-8')
+                                  buffer.close()
+                                  
+                                  # Create and open a simple HTML file with the image
+                                  html = f'''
+                                  <html>
+                                  <head>
+                                    <title>Plot {fig_num}</title>
+                                  </head>
+                                  <body>
+                                    <div style="text-align: center;">
+                                      <h2>Figure {fig_num}</h2>
+                                      <img src="data:image/png;base64,{image_data}" />
+                                    </div>
+                                  </body>
+                                  </html>
+                                  '''
+                                  
+                                  # Instead of opening a new window, display inline
+                                  # Create a special div for the output
+                                  plot_div = js.document.getElementById('matplotlib-output')
+                                  if not plot_div:
+                                      # If the div doesn't exist, create it
+                                      plot_div = js.document.createElement('div')
+                                      plot_div.id = 'matplotlib-output'
+                                      # Style hidden by default - React will handle display
+                                      plot_div.style.cssText = 'display:none; position: absolute; top: 0; left: 0; width: 0; height: 0; overflow: hidden; pointer-events: none;'
+                                      # Add to the body
+                                      js.document.body.appendChild(plot_div)
+                                  
+                                  # Create a container for this figure that our React component can find
+                                  figure_div = js.document.createElement('div')
+                                  figure_div.className = 'matplotlib-figure'
+                                  # Store the figure number as data attribute
+                                  figure_div.dataset.figNum = str(fig_num)
+                                  
+                                  # Set a fixed size container to prevent layout shifts
+                                  figure_div.style.cssText = 'margin: 10px; padding: 10px; border: 1px solid #eee; position: relative; z-index: 1;'
+                                  
+                                  # Create image element with explicit sizing
+                                  img = js.document.createElement('img')
+                                  img.src = f"data:image/png;base64,{image_data}"
+                                  img.style.cssText = 'max-width: 100%; height: auto; display: block;'
+                                  
+                                  # Add the image to the figure div
+                                  figure_div.appendChild(img)
+                                  
+                                  # Add the figure to our container
+                                  plot_div.appendChild(figure_div)
+                                  
+                                  # Make sure the plot div is visible but contained
+                                  plot_div.style.display = 'block'
+                                  plot_div.style.position = 'absolute'
+                                  plot_div.style.top = '0'
+                                  plot_div.style.left = '0'
+                                  plot_div.style.width = '0'
+                                  plot_div.style.height = '0'
+                                  plot_div.style.overflow = 'hidden'
+                                  plot_div.style.pointerEvents = 'none'
+                                  
+                                  print(f"Plot figure {fig_num} displayed inline")
+                              except Exception as e:
+                                  print(f"Error displaying figure {fig_num}: {e}")
+                          
+                          
+                          print(f"{len(figures)} plot(s) displayed inline at the top of the page")
+                      else:
+                          print("No matplotlib figures were created")
+                      
+                      # Clean up to avoid memory issues
+                      plt.close('all')
+                      
+                      # Restore stderr
+                      sys.stderr = old_stderr
+                  except Exception as err:
+                      # Restore stderr if we captured it
+                      if 'old_stderr' in locals():
+                          sys.stderr = old_stderr
+                      
+                      print(f"Error displaying plot: {str(err)}")
+                      print("If you don't see a plot window, check if popups are blocked")
+              
+              # Collect output and restore stdout
+              output = redirected_output.getvalue()
+              sys.stdout = old_stdout
+              
+              # Store output in hidden div for React
+              output_div = js.document.getElementById('pyscript-output')
+              if output_div:
+                  output_div.textContent = output
+                  
+              return output
+          except Exception as e:
+              return f"Error: {str(e)}"
+      
+      def get_version():
+          return "Python 3.12 with PyScript 2025.3.1"
+      
+      # Export functions to JavaScript
+      js.window.pyExecuteCode = create_proxy(execute_code)
+      js.window.pyGetVersion = create_proxy(get_version)
+      
+      # Init message
+      print('PyScript 2025.3.1 initialized')
+      print(f'Random test: {random.randint(1, 100)}')
+      
+      # Check available modules
+      modules = ["random", "math", "time", "numpy"]
+      try:
+          import pandas
+          modules.append("pandas")
+      except: pass
+      
+      # Import matplotlib safely without configuring it
+      try:
+          # Redirect stderr temporarily to capture font cache message
+          old_stderr = sys.stderr
+          sys.stderr = io.StringIO()
+          # Import with minimal configuration
+          import matplotlib
+          matplotlib.use('Agg')  # Non-interactive backend
+          # Set absolute minimal configuration
+          matplotlib.rcParams.update({
+              'figure.dpi': 80,
+              'interactive': False,
+              'font.family': 'monospace'
+          })
+          # Add matplotlib to available modules list
+          modules.append("matplotlib")
+          # Restore stderr
+          sys.stderr = old_stderr
+      except Exception as mpl_err:
+          print(f"Note: Matplotlib import warning: {mpl_err}")
+          pass
+      
+      try:
+          import sklearn
+          modules.append("scikit-learn")
+      except: pass
+      
+      print(f'Available modules: {", ".join(modules)}')
+    </py-script>
+  </body>
+</html>

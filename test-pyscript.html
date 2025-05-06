@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>PyScript Test</title>
+  <link rel="stylesheet" href="https://pyscript.net/releases/2022.12.1/pyscript.css" />
+  <script defer src="https://pyscript.net/releases/2022.12.1/pyscript.js"></script>
+  <style>
+    #code-editor { width: 100%; height: 200px; font-family: monospace; }
+    #output { border: 1px solid #ccc; padding: 10px; margin-top: 10px; min-height: 100px; }
+  </style>
+</head>
+<body>
+  <h1>PyScript Direct Test</h1>
+  
+  <textarea id="code-editor">print("Hello, PyScript!")
+for i in range(5):
+    print(f"Number: {i}")</textarea>
+  <br>
+  <button id="run-button">Run Code</button>
+  
+  <div id="output"></div>
+  
+  <!-- PyScript Runtime -->
+  <py-script>
+    import sys
+    from js import document
+    
+    def run_code(event):
+        # Get code from textarea
+        code = document.getElementById("code-editor").value
+        
+        try:
+            # Capture output
+            import io
+            old_stdout = sys.stdout
+            redirected_output = sys.stdout = io.StringIO()
+            
+            # Execute code
+            exec(code)
+            
+            # Get output
+            output = redirected_output.getvalue()
+            sys.stdout = old_stdout
+            
+            # Display output
+            document.getElementById("output").innerText = output
+        except Exception as e:
+            document.getElementById("output").innerText = f"Error: {str(e)}"
+    
+    # Connect button
+    document.getElementById("run-button").addEventListener("click", run_code)
+  </py-script>
+</body>
+</html>

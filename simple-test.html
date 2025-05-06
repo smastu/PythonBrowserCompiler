@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>PyScript Test</title>
+    <link rel="stylesheet" href="https://pyscript.net/latest/pyscript.css" />
+    <script defer src="https://pyscript.net/latest/pyscript.js"></script>
+  </head>
+  <body>
+    <h1>PyScript Test</h1>
+    <button id="run-button">Run Python Code</button>
+    <div id="output"></div>
+
+    <py-script>
+      import sys
+      from pyscript import display
+      
+      def run_code():
+          display("Hello from Python! Running " + sys.version)
+      
+      # Expose function to JavaScript
+      from js import document
+      document.getElementById("run-button").addEventListener("click", lambda _: run_code())
+    </py-script>
+  </body>
+</html>

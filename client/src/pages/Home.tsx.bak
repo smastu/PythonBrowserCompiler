@@ -1,0 +1,429 @@
+import { useState, useEffect, useRef } from "react";
+import { Separator } from "@/components/ui/separator";
+import { ResizablePanel, ResizablePanelGroup, ResizableHandle } from "@/components/ui/resizable";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import type { ButtonProps } from "@/components/ui/button";
+import ExecuteButton from "@/components/ExecuteButton";
+import CodeEditor from "@/components/CodeEditor";
+import OutputConsole from "@/components/OutputConsole";
+import DownloadOptions from "@/components/DownloadOptions";
+import SystemInfo from "@/components/SystemInfo";
+import ExampleSnippets from "@/components/ExampleSnippets";
+import { executeCode, getInterpreterVersion } from "@/lib/pyscript";
+import { useLocation } from "wouter";
+import { toast } from "@/hooks/use-toast";
+
+export default function Home() {
+  // State for custom modules management
+  const [moduleDialogOpen, setModuleDialogOpen] = useState<boolean>(false);
+  const [customModules, setCustomModules] = useState<string[]>([]);
+  const [newModuleName, setNewModuleName] = useState<string>("");
+  const [code, setCode] = useState<string>(`import matplotlib.pyplot as plt
+import numpy as np
+
+# Generate data for the plot
+x = np.linspace(0, 10, 100)
+y = np.sin(x)
+
+# Create a simple line plot
+plt.figure(figsize=(8, 4))
+plt.plot(x, y, 'b-', linewidth=2)
+plt.title('Sine Wave')
+plt.xlabel('X axis')
+plt.ylabel('Y axis')
+plt.grid(True)
+
+# Show the plot
+plt.show()
+
+# Print some information
+print(f"X range: {min(x)} to {max(x)}")
+print(f"Y range: {min(y):.2f} to {max(y):.2f}")
+`);
+
+  // Use code examples from the ExampleSnippets component
+  const [output, setOutput] = useState<string>("");
+  // PyScriptは内部的にPyodideを使用します
+  const interpreter = "pyodide";
+  const [loading, setLoading] = useState<boolean>(false);
+  const [version, setVersion] = useState<string>("Loading...");
+  const [location] = useLocation();
+  const codeEditorRef = useRef<any>(null);
+  const hasJoinedSession = useRef(false);
+
+  // Detect if there's a session ID in the URL
+  useEffect(() => {
+    const checkForCollaborationSession = () => {
+      try {
+        const url = new URL(window.location.href);
+        const sessionId = url.searchParams.get("session");
+
+        if (sessionId && !hasJoinedSession.current && codeEditorRef.current) {
+          // Reference to the CodeEditor component's joinSession method
+          if (typeof codeEditorRef.current.joinSession === "function") {
+            console.log("Detected collaboration session in URL:", sessionId);
+            toast({
+              title: "Collaboration Session Detected",
+              description: "Joining shared coding session...",
+            });
+
+            // Try multiple times with increasing delays to ensure editor is fully initialized
+            const attemptJoin = (attempts = 0) => {
+              if (attempts >= 5) {
+                console.error("Failed to join session after multiple attempts");
+                toast({
+                  title: "Connection Error",
+                  description:
+                    "Could not join collaboration session. Please try again.",
+                  variant: "destructive",
+                });
+                return;
+              }
+
+              try {
+                if (
+                  codeEditorRef.current &&
+                  typeof codeEditorRef.current.joinSession === "function"
+                ) {
+                  console.log(
+                    `Joining session ${sessionId} (attempt ${attempts + 1})`,
+                  );
+                  codeEditorRef.current.joinSession(sessionId);
+                  hasJoinedSession.current = true;
+
+                  // Remove session param from URL to prevent re-joining
+                  const newUrl = new URL(window.location.href);
+                  newUrl.searchParams.delete("session");
+                  window.history.replaceState(
+                    {},
+                    document.title,
+                    newUrl.toString(),
+                  );
+                } else {
+                  // Editor not ready yet, try again later
+                  console.log(
+                    `Editor not ready, retrying in ${500 * (attempts + 1)}ms`,
+                  );
+                  setTimeout(
+                    () => attemptJoin(attempts + 1),
+                    500 * (attempts + 1),
+                  );
+                }
+              } catch (err) {
+                console.error(
+                  `Error joining session (attempt ${attempts + 1}):`,
+                  err,
+                );
+                setTimeout(
+                  () => attemptJoin(attempts + 1),
+                  500 * (attempts + 1),
+                );
+              }
+            };
+
+            // Start join attempts
+            attemptJoin();
+          }
+        }
+      } catch (e) {
+        console.error("Error parsing collaboration session from URL", e);
+      }
+    };
+
+    checkForCollaborationSession();
+  }, [location]);
+
+  useEffect(() => {
+    // Get interpreter version
+    const fetchVersion = async () => {
+      try {
+        const versionText = await getInterpreterVersion(interpreter);
+        setVersion(versionText);
+      } catch (error) {
+        setVersion("Error loading version");
+        console.error("Failed to load interpreter version:", error);
+      }
+    };
+
+    fetchVersion();
+  }, []);
+
+  const handleRunCode = async () => {
+    if (!code.trim()) {
+      setOutput("No code to execute. Please write some code.");
+      return;
+    }
+    
+    // Set loading states first for a smoother transition
+    setLoading(true);
+    setOutput("Executing code...");
+    
+    // Small delay to allow loading animation to render before heavy operations
+    // This helps prevent the UI thread from blocking
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // Clear all plots before running new code
+    // We need to clear both our container and Python's matplotlib output
+    // to avoid artifacts from previous runs
+
+    // Clear our plot container div
+    const plotContainer = document.querySelector(".plot-container");
+    if (plotContainer instanceof HTMLElement) {
+      // 直接クリアして表示をリセット
+      plotContainer.innerHTML = "";
+      plotContainer.style.display = "none";
+    }
+
+    // Clear Python's original matplotlib output
+    const pythonPlotDiv = document.getElementById("matplotlib-output");
+    if (pythonPlotDiv) {
+      pythonPlotDiv.innerHTML = "";
+    }
+
+    // Clear any matplotlib divs that might be lingering
+    document.querySelectorAll('div[id^="matplotlib_"]').forEach((div) => {
+      try {
+        if (div.parentNode) {
+          div.parentNode.removeChild(div);
+        }
+      } catch (e) {
+        console.error("Error removing matplotlib div:", e);
+      }
+    });
+
+    try {
+      // Pass custom modules to the execution environment
+      const result = await executeCode(code, interpreter, customModules);
+      
+      // Small delay before updating UI to ensure smooth transition
+      setTimeout(() => {
+        setOutput(result);
+        setLoading(false);
+      }, 100);
+    } catch (error) {
+      // Small delay before updating UI to ensure smooth transition
+      setTimeout(() => {
+        setOutput(
+          `Error: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        setLoading(false);
+      }, 100);
+    }
+  };
+
+  const handleClearEditor = () => {
+    if (window.confirm("Are you sure you want to clear the editor?")) {
+      setCode("");
+    }
+  };
+
+  const handleClearOutput = () => {
+    setOutput("");
+  };
+
+  // Module management handlers
+  const handleAddModule = () => {
+    if (!newModuleName.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a module name",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (customModules.includes(newModuleName.trim())) {
+      toast({
+        title: "Module Already Added",
+        description: `The module '${newModuleName}' is already in your list`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setCustomModules([...customModules, newModuleName.trim()]);
+    setNewModuleName("");
+    toast({
+      title: "Module Added",
+      description: `Added '${newModuleName}' to available modules`,
+    });
+  };
+
+  const handleRemoveModule = (moduleName: string) => {
+    setCustomModules(customModules.filter((m) => m !== moduleName));
+    toast({
+      title: "Module Removed",
+      description: `Removed '${moduleName}' from available modules`,
+    });
+  };
+
+  return (
+    <div className="bg-gray-50 min-h-screen flex flex-col">
+      {/* No navbar */}
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1" style={{ minWidth: 'calc(100% - 2rem)', minHeight: '900px' }}>
+        {/* Header */}
+        <header className="mb-6">
+          <h1 className="text-3xl font-bold text-gray-800">
+            ブラウザPythonコンパイラ
+          </h1>
+          <p className="text-gray-600 mt-2">
+            Write, execute, and download Python code directly in your browser
+          </p>
+        </header>
+
+        <Separator className="my-4" />
+
+        {/* Resizable Compiler Interface */}
+        <ResizablePanelGroup direction="horizontal" className="w-full" style={{ minWidth: '100%', width: '100%', boxSizing: 'border-box' }}>
+          {/* Editor Section */}
+          <ResizablePanel defaultSize={65} minSize={40} className="space-y-4">
+            <ExecuteButton onRunCode={handleRunCode} loading={loading} />
+
+            <CodeEditor
+              ref={codeEditorRef}
+              code={code}
+              setCode={setCode}
+              onClear={handleClearEditor}
+            />
+
+            <ExampleSnippets setCode={setCode} />
+          </ResizablePanel>
+
+          {/* Resize Handle */}
+          <ResizableHandle withHandle />
+
+          {/* Output Section */}
+          <ResizablePanel defaultSize={35} minSize={25} className="space-y-4">
+            <OutputConsole output={output} onClear={handleClearOutput} />
+
+            <DownloadOptions code={code} output={output} />
+
+            <SystemInfo interpreter={interpreter} version={version} />
+
+            {/* Module Management Section */}
+            <div className="p-4 bg-white rounded-md shadow-sm border border-gray-300">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="font-medium text-gray-700">Custom Modules</h3>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-blue-600"
+                      onClick={() => setModuleDialogOpen(true)}
+                    >
+                      <i className="ri-add-line mr-1"></i> Add Module
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {customModules.length === 0 ? (
+                      <p className="text-sm text-gray-500">
+                        No custom modules added yet
+                      </p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {customModules.map((module) => (
+                          <Badge
+                            key={module}
+                            variant="secondary"
+                            className="flex items-center gap-1"
+                          >
+                            {module}
+                            <button
+                              className="ml-1 text-gray-500 hover:text-red-500"
+                              onClick={() => handleRemoveModule(module)}
+                            >
+                              <i className="ri-close-line"></i>
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </main>
+
+      {/* Custom Module Dialog */}
+      <Dialog open={moduleDialogOpen} onOpenChange={setModuleDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Custom Python Module</DialogTitle>
+            <DialogDescription>
+              Add Python modules you'd like to use in your code. Only modules
+              available in Pyodide can be imported.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-4 items-center gap-4">
+              <Label htmlFor="module-name" className="text-right">
+                Module Name
+              </Label>
+              <Input
+                id="module-name"
+                placeholder="e.g. scipy, sympy, etc."
+                value={newModuleName}
+                onChange={(e) => setNewModuleName(e.target.value)}
+                className="col-span-3"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setModuleDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleAddModule}>Add Module</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      
+      {/* Footer with GitHub Link */}
+      <footer className="py-4 bg-gray-100 border-t border-gray-200 mt-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-center text-sm text-gray-500">
+            <a 
+              href="https://github.com/smastu" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="flex items-center hover:text-blue-600 transition-colors"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="mr-2"
+              >
+                <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+              </svg>
+              <span>Developed by smastu</span>
+            </a>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}
