@@ -9,7 +9,7 @@ interface CollaborationSession {
   users: {
     id: string;
     name: string;
-    cursor: { line: number; ch: number };
+    inputPosition: { line: number; ch: number };
     color: string;
   }[];
   code: string;
@@ -34,7 +34,7 @@ function generateSessionId(): string {
 // Generate random color for users
 function generateColor(): string {
   const colors = [
-    "#FF5733", "#33FF57", "#3357FF", "#FF33A8", 
+    "#FF5733", "#33FF57", "#3357FF", "#FF33A8",
     "#33FFF5", "#F5FF33", "#FF8333", "#33FFB5",
     "#B533FF", "#FF33B5"
   ];
@@ -44,10 +44,10 @@ function generateColor(): string {
 export async function registerRoutes(app: Express): Promise<Server> {
   // Create HTTP server
   const httpServer = createServer(app);
-  
+
   // Create WebSocket server on a separate path to avoid conflicts with Vite's HMR
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
-  
+
   // API routes (prefix with /api)
   // Create new collaboration session
   app.post("/api/sessions", (req, res) => {
@@ -79,35 +79,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let sessionId = '';
     let userId = '';
     let pingTimeout: NodeJS.Timeout | null = null;
-    
+
     log("WebSocket connection established", "routes");
-    
+
     // Set up ping interval to keep connection alive
     function heartbeat() {
       // Clear previous timeout
       if (pingTimeout) {
         clearTimeout(pingTimeout);
       }
-      
+
       // Set a timeout to terminate connection if no pong is received
       pingTimeout = setTimeout(() => {
         log(`Terminating stale connection for ${userId} in session ${sessionId}`, "routes");
         (ws as any).terminate();
       }, 30000); // 30 seconds timeout
     }
-    
+
     // Start the heartbeat
     heartbeat();
-    
+
     // Handle pong responses
     ws.on('pong', heartbeat);
-    
+
     // Set up interval to send pings
     const pingInterval = setInterval(() => {
       if (ws.readyState === 1) { // WebSocket.OPEN
         ws.ping();
       }
-    }, 25000); // Send ping every 25 seconds
+    }, 25000);
 
     ws.on('message', function incoming(message) {
       try {
@@ -116,7 +116,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Handle different message types
         console.log(`Received ${data.type} message from ${data.userId || "unknown"} for session ${data.sessionId || "new"}`);
-        
+
         switch (data.type) {
           case 'ping':
             // Simple ping-pong to test WebSocket connectivity
@@ -130,25 +130,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
               log(`Error sending pong: ${err}`, "routes");
             }
             break;
-            
+
           case 'join':
             // Join or create a session
+            if (!data.userName) {
+              ws.send(JSON.stringify({
+                type: 'error',
+                message: 'Username is required'
+              }));
+              return;
+            }
+
             sessionId = data.sessionId || generateSessionId();
             userId = data.userId || `user-${Date.now()}`;
-            const userName = data.userName || `User ${Math.floor(Math.random() * 1000)}`;
-            
+            const userName = data.userName;
+
             log(`User ${userName} joining session ${sessionId}`, "routes");
-            
+
             // Store session and user IDs on the WebSocket object for proper client identification
             (ws as any).sessionId = sessionId;
             (ws as any).userId = userId;
-            
+
             // Initialize session if it doesn't exist
             if (!sessions[sessionId]) {
               sessions[sessionId] = {
                 users: [],
                 code: data.initialCode || '',
-                chatMessages: [] // チャットメッセージの配列を初期化
+                chatMessages: []
               };
               log(`Created new session: ${sessionId}`, "routes");
             }
@@ -156,7 +164,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Check if user already exists in session
             const existingUserIndex = sessions[sessionId].users.findIndex(u => u.id === userId);
             const userColor = generateColor();
-            
+
             if (existingUserIndex >= 0) {
               // Update existing user
               sessions[sessionId].users[existingUserIndex] = {
@@ -169,7 +177,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               sessions[sessionId].users.push({
                 id: userId,
                 name: userName,
-                cursor: { line: 0, ch: 0 },
+                inputPosition: { line: 0, ch: 0 },
                 color: userColor
               });
               log(`User ${userName} added to session ${sessionId}`, "routes");
@@ -183,7 +191,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               users: sessions[sessionId].users,
               code: sessions[sessionId].code,
               color: userColor,
-              chatMessages: sessions[sessionId].chatMessages // チャット履歴も送信
+              chatMessages: sessions[sessionId].chatMessages
             }));
 
             // Notify other users about the new user
@@ -199,11 +207,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Log the incoming code-change event
             log(`Received code-change from ${data.userId} for session ${data.sessionId || (ws as any).sessionId}`, "routes");
             console.log(`CODE CHANGE RECEIVED: from ${data.userId} for session ${data.sessionId || (ws as any).sessionId}`);
-            
+
             // Determine sessionId to use, with fallbacks
             let sessionToUse = (ws as any).sessionId || data.sessionId;
             let userIdToUse = (ws as any).userId || data.userId;
-            
+
             // More detailed logging
             console.log('Code change details:', {
               sessionToUse,
@@ -213,13 +221,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
               codeLength: data.code?.length || 0,
               sessionExists: sessionToUse ? !!sessions[sessionToUse] : false
             });
-            
+
             // We need a valid session ID one way or another
             if (!sessionToUse || !sessions[sessionToUse]) {
               const errorMsg = `Cannot process code change: invalid session ID ${sessionToUse}`;
               log(errorMsg, "routes");
               console.error(errorMsg);
-              
+
               // Try to send error back to client
               try {
                 ws.send(JSON.stringify({
@@ -231,29 +239,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
               }
               break;
             }
-            
+
             // We need a valid user ID
             if (!userIdToUse) {
               log(`Missing userId for code-change in session ${sessionToUse}`, "routes");
               break;
             }
-            
+
             // Store the session and user IDs on the WebSocket object if not already set
             // This ensures future messages can be properly associated
             if (!(ws as any).sessionId && sessionToUse) {
               (ws as any).sessionId = sessionToUse;
               log(`Updated WebSocket with sessionId ${sessionToUse}`, "routes");
             }
-            
+
             if (!(ws as any).userId && userIdToUse) {
               (ws as any).userId = userIdToUse;
               log(`Updated WebSocket with userId ${userIdToUse}`, "routes");
             }
-            
+
             // Always update code in the session
             sessions[sessionToUse].code = data.code;
             log(`Updated code in session ${sessionToUse} (${data.code.length} chars)`, "routes");
-            
+
             // Create message object with all needed information
             const codeUpdateMsg = {
               type: 'code-update',
@@ -261,74 +269,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
               userId: userIdToUse,
               timestamp: data.timestamp || Date.now()
             };
-            
+
             // Broadcast to all users in session except sender
             log(`Broadcasting code-update to session ${sessionToUse} (${data.code.length} chars)`, "routes");
             console.log(`BROADCASTING CODE UPDATE: to session ${sessionToUse} (${data.code.length} chars)`);
-            
+
             // Using our improved broadcastToSession function
             broadcastToSession(sessionToUse, codeUpdateMsg, userIdToUse);
             break;
 
-          case 'cursor-move':
-            // Update cursor position and broadcast to all users
-            // Use the same improved pattern from code-change
-            
-            // Determine sessionId to use, with fallbacks
-            const cursorSessionId = (ws as any).sessionId || data.sessionId;
-            const cursorUserId = (ws as any).userId || data.userId;
-            
+          case 'input-position':
+            // Update input position and broadcast to all users
+            const inputSessionId = (ws as any).sessionId || data.sessionId;
+            const inputUserId = (ws as any).userId || data.userId;
+
             // Skip if no valid session/user
-            if (!cursorSessionId || !sessions[cursorSessionId] || !cursorUserId) {
-              // Silently fail for cursor moves to avoid console spam
+            if (!inputSessionId || !sessions[inputSessionId] || !inputUserId) {
               break;
             }
-            
+
             // Update sessionId and userId on WebSocket if not set
             if (!(ws as any).sessionId) {
-              (ws as any).sessionId = cursorSessionId;
+              (ws as any).sessionId = inputSessionId;
             }
             if (!(ws as any).userId) {
-              (ws as any).userId = cursorUserId;
+              (ws as any).userId = inputUserId;
             }
-            
+
             // Find user in session
-            const sessionForCursor = sessions[cursorSessionId];
-            const user = sessionForCursor.users.find(u => u.id === cursorUserId);
-            
-            if (user) {
-              // Only update if the cursor actually moved to reduce traffic
-              if (user.cursor.line !== data.cursor.line || user.cursor.ch !== data.cursor.ch) {
-                // Update cursor in user record
-                user.cursor = data.cursor;
-                
-                // Send to all other users in session
-                broadcastToSession(cursorSessionId, {
-                  type: 'cursor-update',
-                  userId: cursorUserId,
-                  cursor: data.cursor,
-                  timestamp: data.timestamp || Date.now()
-                }, cursorUserId);
-              }
+            const sessionForInput = sessions[inputSessionId];
+            const inputUser = sessionForInput.users.find(u => u.id === inputUserId);
+
+            if (inputUser) {
+              // Update input position in user record
+              inputUser.inputPosition = data.position;
+
+              // Send to all other users in session with complete user info
+              broadcastToSession(inputSessionId, {
+                type: 'input-position',
+                userId: inputUserId,
+                userName: inputUser.name,
+                position: data.position,
+                timestamp: data.timestamp || Date.now()
+              }, inputUserId);
             } else {
-              // User not found in session, could be a registration issue
-              // Add them to the users array if they're not there
+              // User not found in session, add them
               const newUser = {
-                id: cursorUserId,
-                name: data.userName || `User ${cursorUserId.split('-')[1] || 'Unknown'}`,
-                cursor: data.cursor,
+                id: inputUserId,
+                name: data.userName || `User ${inputUserId.split('-')[1] || 'Unknown'}`,
+                inputPosition: data.position,
                 color: data.color || generateColor()
               };
-              
-              sessionForCursor.users.push(newUser);
-              log(`Added missing user ${cursorUserId} to session ${cursorSessionId}`, "routes");
-              
-              // Broadcast the cursor position
-              broadcastToSession(cursorSessionId, {
-                type: 'cursor-update',
-                userId: cursorUserId,
-                cursor: data.cursor
-              }, cursorUserId);
+
+              sessionForInput.users.push(newUser);
+              log(`Added missing user ${inputUserId} to session ${inputSessionId}`, "routes");
+
+              // Broadcast the input position with complete user info
+              broadcastToSession(inputSessionId, {
+                type: 'input-position',
+                userId: inputUserId,
+                userName: newUser.name,
+                position: data.position,
+                timestamp: data.timestamp || Date.now()
+              }, inputUserId);
             }
             break;
 
@@ -337,13 +340,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const chatSessionId = (ws as any).sessionId || data.sessionId;
             const chatUserId = (ws as any).userId || data.userId;
             const chatUserName = data.userName || "Unknown User";
-            
+
             if (!chatSessionId || !sessions[chatSessionId] || !chatUserId) {
               // 有効なセッションまたはユーザーでない場合は処理しない
               log(`Invalid session or user for chat message: ${chatSessionId}, ${chatUserId}`, "routes");
               break;
             }
-            
+
             // メッセージデータを作成
             const chatMessage = {
               id: `msg-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`,
@@ -352,11 +355,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               message: data.message,
               timestamp: Date.now()
             };
-            
+
             // セッションにメッセージを保存
             sessions[chatSessionId].chatMessages.push(chatMessage);
             log(`Chat message from ${chatUserName} in session ${chatSessionId}: ${data.message.substring(0, 30)}${data.message.length > 30 ? '...' : ''}`, "routes");
-            
+
             // 全ユーザーにメッセージを送信
             broadcastToSession(chatSessionId, {
               type: 'chat-message',
@@ -380,23 +383,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         pingTimeout = null;
       }
       clearInterval(pingInterval);
-      
+
       // Use the stored session ID from the WebSocket object if available
       const wsSessionId = (ws as any).sessionId || sessionId;
       const wsUserId = (ws as any).userId || userId;
-      
+
       if (wsSessionId && sessions[wsSessionId]) {
         log(`User ${wsUserId} disconnected from session ${wsSessionId}`, "routes");
-        
+
         // Remove user from session
         sessions[wsSessionId].users = sessions[wsSessionId].users.filter(u => u.id !== wsUserId);
-        
+
         // Notify other users
         broadcastToSession(wsSessionId, {
           type: 'user-left',
           userId: wsUserId
         });
-        
+
         // Clean up empty sessions
         if (sessions[wsSessionId].users.length === 0) {
           log(`Cleaning up empty session: ${wsSessionId}`, "routes");
@@ -413,18 +416,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         log(`Cannot broadcast to invalid session: ${sessionId}`, "routes");
         return;
       }
-      
+
       // Keep track of which clients belong to which session
       const sessionUsers = sessions[sessionId].users || [];
       if (sessionUsers.length === 0 && excludeUserId) {
         log(`Warning: Trying to broadcast to empty session ${sessionId}`, "routes");
         // But we'll continue anyway in case clients haven't registered their user IDs yet
       }
-      
+
       // Log for debugging - especially critical for code updates since they need to reach all clients
       const isCriticalEvent = message.type === 'code-update';
-      const isFrequentEvent = message.type === 'cursor-update';
-      
+      const isFrequentEvent = message.type === 'input-position';
+
       // Enhanced logging for debugging
       if (isCriticalEvent) {
         // ALWAYS log details for code updates - these are critical for debugging
@@ -434,57 +437,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Log other non-frequent events
         log(`Broadcasting ${message.type} to ${sessionUsers.length} users in session ${sessionId}`, "routes");
       }
-      
+
       // Use two approaches for finding clients to maximize broadcast success:
-      
+
       // 1. Direct lookup by sessionId property on WebSocket objects
       const targetClients = Array.from(wss.clients)
-        .filter((client: any) => 
-          client.readyState === WebSocket.OPEN && 
-          client.sessionId === sessionId && 
+        .filter((client: any) =>
+          client.readyState === WebSocket.OPEN &&
+          client.sessionId === sessionId &&
           client.userId !== excludeUserId
         );
-      
+
       // 2. Additional check for clients that might be connected but with unset properties
       // Convert to array once
       const allClients = Array.from(wss.clients);
-      
+
       // Find the sender client if we have an excludeUserId
-      const senderClient = excludeUserId ? 
-        allClients.find((c: any) => c.userId === excludeUserId) : 
+      const senderClient = excludeUserId ?
+        allClients.find((c: any) => c.userId === excludeUserId) :
         null;
-      
+
       // Now filter for possible unregistered clients
-      const possibleClients = allClients.filter((client: any) => 
-        client.readyState === WebSocket.OPEN && 
+      const possibleClients = allClients.filter((client: any) =>
+        client.readyState === WebSocket.OPEN &&
         !client.sessionId && // Clients that haven't fully registered
         client !== senderClient // Don't send to the sender
       );
-      
+
       // If no primary target clients found and this is a critical event, try to broadcast to all possible clients
       if (isCriticalEvent && targetClients.length === 0 && possibleClients.length > 0) {
         log(`WARNING: No identified clients for session ${sessionId}, but found ${possibleClients.length} possible clients. Attempting broadcast to all.`, "routes");
       }
-      
+
       const clientsToUse = targetClients.length > 0 ? targetClients : (isCriticalEvent ? possibleClients : []);
-      
+
       // If there are no clients to send to, early return
       if (clientsToUse.length === 0) {
         log(`No active clients to send ${message.type} to in session ${sessionId}`, "routes");
         return;
       }
-      
+
       // Serialize the message once for all clients
       const messageStr = JSON.stringify(message);
       let sentCount = 0;
       let errorCount = 0;
-      
+
       // Send to all filtered clients with detailed logging
       clientsToUse.forEach((client: any) => {
         try {
           client.send(messageStr);
           sentCount++;
-          
+
           // Log only for important events or if verbose logging is needed
           if (isCriticalEvent) {
             log(`Sent code-update to user ${client.userId || "unknown"} in session ${client.sessionId || "unknown"}`, "routes");
@@ -494,7 +497,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           log(`Error sending to client ${client.userId || "unknown"}: ${err}`, "routes");
         }
       });
-      
+
       // Always log the result of code updates
       if (isCriticalEvent) {
         console.log(`CODE UPDATE RESULTS: sent to ${sentCount}/${clientsToUse.length} clients, errors: ${errorCount}`);
